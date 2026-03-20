@@ -1,8 +1,8 @@
 //testing out variables and types in TypeScript
-let projectName: string = "Kevin's Project";
-let version: number = 1;
-let isActive: boolean = true;
-let description: string = "This is a test project for Kevin.";
+const projectName: string = "Kevin's Project";
+const version: number = 1;
+const isActive: boolean = true;
+const description: string = "This is a test project for Kevin.";
 
 console.log(`Project Name: ${projectName}`);
 console.log(`Version: ${version}`);
@@ -10,8 +10,7 @@ console.log(`Is Active: ${isActive}`);
 console.log(`Description: ${description}`);
 
 //arrays
-let teamMembers: string[] = ["Geovanni", "Brian", "Abdul", "Kevin"]; //array of strings representing team members
-let scores: number[] = [85, 90, 100, 92]; //array of numbers representing scores
+const teamMembers: string[] = ["Geovanni", "Brian", "Abdul", "Kevin"]; //array of strings representing team members
 
 teamMembers.push("Ivan"); //adding a new team member to the array
 console.log("Team Members:", teamMembers); //displaying the updated list of team members
@@ -44,11 +43,11 @@ function add(a: number, b: number): number {
 console.log("5 + 10 =", add(5, 10)); //calling the add function with 5 and 10 as arguments and displaying the result
 
 // Arrow function (a shorter way to write functions)
-const multiply = (a:number, b:number): number => a * b;
+const multiply = (a: number, b: number): number => a * b;
 
-console.log("5 * 10 =", multiply(5, 10));   
+console.log("5 * 10 =", multiply(5, 10));
 
-// if/else
+// if/else statements
 
 let score: number = 90;
 
@@ -58,9 +57,6 @@ if (score >= 90) {
     console.log("Grade: B");
 } else if (score >= 70) {
     console.log("Grade: C");
+} else {
+    console.log("Grade: F");
 }
-
-
-
-
-
