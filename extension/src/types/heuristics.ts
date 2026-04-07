@@ -1,15 +1,15 @@
 // SHARED Types for Heuristics (used by all modules)
-//Anyone on the team building a heuristic function (URL checks, content
-//checks, etc.) should import these types and use them as the input and
-//output shapes for their function. This guarantees that all heuristic
+// Anyone on the team building a heuristic function (URL checks, content
+// checks, etc.) should import these types and use them as the input and
+// output shapes for their function. This guarantees that all heuristic
 // modules speak the same language and can be combined cleanly.
 
-//Verdict
+// Verdict
 
 export type Verdict = "Safe" | "Uncertain" | "Suspicious" | "Likely Scam";
 
 // HeuristicSource - describes which module produced result
-//later let's add images too for detection
+// later let's add images too for detection
 
 export type HeuristicSource =  "url" | "content";
 
@@ -23,15 +23,15 @@ export interface HeuristicResult {
     source: HeuristicSource;
 }
 
-//Link - extracted from page, links have visible text and href
-//needed to detect mismatched link detection
+// Link - extracted from page, links have visible text and href
+// needed to detect mismatched link detection
 
 export interface Link {
     text: string;
     href: string;
 }
 
-//ExtractedData - the shape of input that heuristic function receives
+// ExtractedData - the shape of input that heuristic function receives
 
 export interface ExtractedPageData {
     url: string;

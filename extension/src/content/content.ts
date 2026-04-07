@@ -17,7 +17,7 @@ function extractPageData(): ExtractedPageData {
     const mainElement: HTMLElement | null = 
         document.querySelector("main") ||
         document.querySelector("article") ||
-        document.querySelector('[role ="main"]');
+        document.querySelector<HTMLElement>('[role ="main"]');
     //get visible text content from page, prioritizing main/article/role=main if available
     const rawText: string = mainElement
         ? mainElement.innerText
@@ -25,6 +25,7 @@ function extractPageData(): ExtractedPageData {
     //limit text content to 5000 chars
     const textContent: string = rawText.trim().substring(0, 5000);
     //extract links from page (visible text and href)
+    //limit to first 100 links with http/https protocols to prevent large payloads
     const linkElements = document.querySelectorAll("a[href]");
     const links: Link[] = Array.from(linkElements)
         .map((element) => {
@@ -32,7 +33,11 @@ function extractPageData(): ExtractedPageData {
             const href = element.getAttribute("href") || "";
             return { text: text, href: href };
         })
-        .filter((link) => link.text.length > 0 && link.href.length > 0);
+        .filter((link) => {
+            const isValidProtocol = link.href.startsWith("http://") || link.href.startsWith("https://");
+            return link.text.length > 0 && isValidProtocol;
+        })
+        .slice(0, 100);
     
     return {
         url: url,

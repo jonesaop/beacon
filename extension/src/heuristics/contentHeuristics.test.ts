@@ -25,7 +25,9 @@ function runTest(name: string, pageData: ExtractedPageData): void {
     console.log("");
 }
 
-//Test 1 - safe page with no scam phrases
+// ---------- Test 1: A normal, safe page ----------
+// This represents something like a Wikipedia article. No scam phrases
+// anywhere. Expected verdict: Safe with score 0.
 runTest("Wikipedia article about the moon", {
     url: "https://en.wikipedia.org/wiki/Moon",
     title: "Moon - Wikipedia",
@@ -34,7 +36,9 @@ runTest("Wikipedia article about the moon", {
     links: []
 });
 
-//Test 2 scam page
+// ---------- Test 2: An obvious scam page ----------
+// Multiple scam phrases in the title and body. Expected: high score,
+// "Likely Scam" verdict, several findings.
 runTest("Obvious prize scam", {
     url: "http://free-prize-winner.xyz/claim",
     title: "Congratulations you are our winner!",
@@ -43,7 +47,9 @@ runTest("Obvious prize scam", {
     links: []
 });
 
-//Test 3 not a clear scam
+// ---------- Test 3: A borderline case ----------
+// One mildly suspicious phrase in the body, nothing in the title or
+// meta. Expected: low-to-mid score, probably "Safe" or "Uncertain".
 runTest("Marketing email with one suspicious phrase", {
     url: "https://newsletter.example.com/sale",
     title: "Spring Sale Newsletter",
@@ -52,7 +58,9 @@ runTest("Marketing email with one suspicious phrase", {
     links: []
 });
 
-//Test 4 - empty page
+// ---------- Test 4: Empty page ----------
+// All fields empty. This tests that the function handles edge cases
+// without crashing. Expected: score 0, "Safe".
 runTest("Empty page", {
     url: "",
     title: "",
@@ -61,7 +69,9 @@ runTest("Empty page", {
     links: []
 });
 
-//Test 5 scam phrase in title
+// ---------- Test 5: Scam phrase only in title ----------
+// Tests that the title weighting (3x) works correctly. One phrase in
+// the title alone should give a score of 3.
 runTest("Scam phrase in title only", {
     url: "https://example.com",
     title: "You have won a prize",
@@ -70,3 +80,47 @@ runTest("Scam phrase in title only", {
     links: []
 });
 
+// ---------- Test 6: Mismatched link  ----------
+// A page with a link whose visible text claims to be apple.com but
+// actually points to a different domain. Expected: score 4 from one
+// mismatched link, verdict "Uncertain", one finding about the mismatch.
+runTest("Phishing link pretending to be apple.com", {
+    url: "https://newsletter.example.com",
+    title: "Newsletter",
+    metaDescription: "Our weekly updates",
+    textContent: "Thank you for reading our newsletter. Please visit our sponsors.",
+    links: [
+        { text: "https://www.apple.com", href: "https://evil-phishing.xyz/login" }
+    ]
+});
+
+// ---------- Test 7: Same-site link should NOT be flagged ----------
+// A link on example.com that points to another page on example.com.
+// The visible text claims example.com (via a subdomain form) and the
+// href goes to a different subdomain of the same site. This should NOT
+// be flagged as a mismatch. Expected: score 0, verdict "Safe".
+runTest("Same-site link with subdomain", {
+    url: "https://blog.example.com/posts/1",
+    title: "My Blog Post",
+    metaDescription: "A blog post about programming",
+    textContent: "Welcome to my blog. I write about software and cats.",
+    links: [
+        { text: "www.example.com", href: "https://shop.example.com/products" }
+    ]
+});
+
+// ---------- Test 8: Normal link with non-domain text should NOT be flagged ----------
+// A link whose visible text is just "Click here" or similar. There's
+// no domain claim in the text, so there's nothing to compare against,
+// so the link should not trigger the mismatch check even though it
+// points to a completely different domain. Expected: score 0, verdict "Safe"
+runTest("Normal link with generic text", {
+    url: "https://news.example.com/article",
+    title: "Breaking News Story",
+    metaDescription: "Today's top headlines",
+    textContent: "In today's news, we cover several important events.",
+    links: [
+        { text: "Click here to read more", href: "https://different-site.com/story" },
+        { text: "About us", href: "https://different-site.com/about" }
+    ]
+});
