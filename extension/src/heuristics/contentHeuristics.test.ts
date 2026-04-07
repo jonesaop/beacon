@@ -8,7 +8,6 @@ import type { ExtractedPageData } from "../types/heuristics";
 function runTest(name: string, pageData: ExtractedPageData): void {
     console.log("===============================================================");
     console.log(`TEST: ${name}`);
-    console.log("TEST: " + name);
     console.log("----------------------------------------------------------------");
     const result = analyzeContent(pageData);
     console.log("Score: " + result.score);
