@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES6",
-    "module": "none",
+    "module": "ESNext",
     "outDir": "dist",
     "rootDir": "src",
+    "types": ["chrome"],
+    "lib": ["DOM", "ES2020"],
     "strict": true,
     "noEmit": false,
     "sourceMap": false
