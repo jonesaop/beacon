@@ -1,13 +1,7 @@
 console.log("Beacon background service worker running");
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "PING") {
-    sendResponse({ reply: "PONG from background" });
-  }
-  return true;
-});
-
 // This is a simple local link checker that evaluates URLs based on basic heuristics.
+// This is not a comprehensive security check and should be supplemented with more robust solutions for production use. (TESTING PURPOSES ONLY))
 interface LinkCheckResult {
     status: "safe" | "unsafe" | "unknown";
     reason: string;
@@ -37,8 +31,16 @@ function evaluateUrl(rawUrl: string): LinkCheckResult {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "PING") {
+    sendResponse({ reply: "PONG from background" });
+    return false;
+    }
+    
     if (message?.type === "CHECK_LINK" && typeof message.url === "string") {
         sendResponse(evaluateUrl(message.url));
+    return false;
     }
-    return true;
+
+    return false;
+    
 });
