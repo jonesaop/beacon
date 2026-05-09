@@ -6,12 +6,14 @@
 
 // Verdict
 
-export type Verdict = "Safe" | "Uncertain" | "Suspicious" | "Likely Scam";
+export type Verdict = "safe" | "suspicious" | "scam";
 
-// HeuristicSource - describes which module produced result
-// later let's add images too for detection
+// HeuristicSource - describes which module produced the result.
+// "content"  = text/phrase/link analysis of the page body
+// "url"      = analysis of the page URL itself
+// "combined" = a merged result from both url + content sources
 
-export type HeuristicSource =  "url" | "content";
+export type HeuristicSource = "content" | "url" | "combined";
 
 // HeuristicResult - the shape of output from any heuristic function
 

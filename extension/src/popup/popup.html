@@ -5,37 +5,23 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <!-- Header with the extension name -->
+
+  <!-- Header -->
   <div id="header">
     <h1>Beacon</h1>
     <p>Scam Detection Tool</p>
-    <!-- Toggle button -->
-    <div id="toggle-container">
-      <span id="toggle-label">Scanning: </span>
-      <label class="knob-switch">
-        <input type="checkbox" id="scan-toggle" checked>
-        <div class="knob-background">
-          <div class="knob-circle"></div>
-        </div>
-      </label>
-      
-      <span id="llm-label">LLM Analysis: </span>
-      <label class="knob-switch">
-        <input type="checkbox" id="llm-toggle" checked>
-        <div class="knob-background">
-          <div class="knob-circle"></div>
-        </div>
-      </label>
-    </div>
   </div>
 
-  <!-- The main button the user clicks to scan -->
-  <button id="scan-button">Check this page</button>
+  <!--
+    "Check this page" button — Tier 2 deep analysis (API call).
+    Starts disabled. popup.ts enables it only when the heuristic score >= 4.
+  -->
+  <button id="scan-button" disabled>Check this page</button>
 
-  <!-- Results area: hidden at first -->
+  <!-- Results area — hidden until popup.ts receives a result from background -->
   <div id="results" class="hidden">
 
-    <!-- Score circle and verdict on the same line -->
+    <!-- Score circle + verdict on the same row -->
     <div id="score-section">
       <div id="score-circle">
         <span id="score-number">0</span>
@@ -52,35 +38,23 @@
       <p id="explanation-text"></p>
     </div>
 
-    <!-- Website information -->
-    <div id="website-info">
-      <h3>Website Information</h3>
-      <div class="info-row">
-        <span class="info-label">Domain Age</span>
-        <span id="info-age" class="info-value"></span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Country</span>
-        <span id="info-country" class="info-value"></span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Registrar</span>
-        <span id="info-registrar" class="info-value"></span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Popularity</span>
-        <span id="info-popularity" class="info-value"></span>
-      </div>
+    <!--
+      Findings list — hidden when there are no findings (safe pages).
+      popup.ts populates this with <li> elements from result.findings[].
+    -->
+    <div id="findings-section" class="hidden">
+      <h3>Findings</h3>
+      <ul id="findings-list"></ul>
     </div>
 
   </div>
 
-  <!-- Error area: hidden at first -->
+  <!-- Error area — hidden until something goes wrong -->
   <div id="error" class="hidden">
     <p id="error-message"></p>
   </div>
 
-  <!-- Load our compiled TypeScript -->
+  <!-- Load the compiled TypeScript (bundled by Vite into popup.js) -->
   <script src="popup.js"></script>
 </body>
 </html>

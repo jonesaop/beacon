@@ -1,279 +1,57 @@
-//(1) typescript interfaces for structured data
-interface PageData {
-  url: string;
-  textContent: string;
-}
+// POPUP CONTROLLER
+//
+// This file runs whenever the user clicks the Beacon icon in the toolbar.
+// It communicates only with the background service worker — never directly
+// with the page — because the popup cannot touch the page's DOM.
+//
+// Flow:
+//   1. Popup opens → ask background for the stored result for this tab
+//   2. Background responds with { result, pageData } or { error: "not found" }
+//   3. Display the result (score, verdict, explanation, findings list)
+//   4. Enable the "Check this page" button only if score >= 4
 
-interface WebsiteInfo {
-  domainAge: string;
-  country: string;
-  registrar: string;
-  popularity: string;
-}
+import type { HeuristicResult } from "../types/heuristics";
 
-interface AnalysisResult {
-  score: number;
-  verdict: string;
-  explanation: string;
-  websiteInfo: WebsiteInfo;
-}
+// –– Element references ––
+// document.getElementById returns HTMLElement | null.
+// We cast each one to the specific element type we know it is so TypeScript
+// lets us use element-specific properties (e.g. .disabled on a button).
 
-//(2) grab references to HTML elements - DO THIS FIRST
-const scanButton = document.getElementById("scan-button") as HTMLButtonElement;
-const resultsDiv = document.getElementById("results") as HTMLDivElement;
-const scoreCircle = document.getElementById("score-circle") as HTMLDivElement;
-const scoreNumber = document.getElementById("score-number") as HTMLSpanElement;
-const verdictText = document.getElementById("verdict-text") as HTMLParagraphElement;
-const verdictUrl = document.getElementById("verdict-url") as HTMLParagraphElement;
+const scanButton      = document.getElementById("scan-button")      as HTMLButtonElement;
+const resultsDiv      = document.getElementById("results")          as HTMLDivElement;
+const scoreCircle     = document.getElementById("score-circle")     as HTMLDivElement;
+const scoreNumber     = document.getElementById("score-number")     as HTMLSpanElement;
+const verdictText     = document.getElementById("verdict-text")     as HTMLParagraphElement;
+const verdictUrl      = document.getElementById("verdict-url")      as HTMLParagraphElement;
 const explanationText = document.getElementById("explanation-text") as HTMLParagraphElement;
-const errorDiv = document.getElementById("error") as HTMLDivElement;
-const errorMessage = document.getElementById("error-message") as HTMLParagraphElement;
+const findingsSection = document.getElementById("findings-section") as HTMLDivElement;
+const findingsList    = document.getElementById("findings-list")    as HTMLUListElement;
+const errorDiv        = document.getElementById("error")            as HTMLDivElement;
+const errorMessage    = document.getElementById("error-message")    as HTMLParagraphElement;
 
-//Website info elements
-const infoAge = document.getElementById("info-age") as HTMLSpanElement;
-const infoCountry = document.getElementById("info-country") as HTMLSpanElement;
-const infoRegistrar = document.getElementById("info-registrar") as HTMLSpanElement;
-const infoPopularity = document.getElementById("info-popularity") as HTMLSpanElement;
-
-//(1.5) Toggle Button Setup - wrapped in DOMContentLoaded
-document.addEventListener('DOMContentLoaded', () => {
-  const scanToggle = document.getElementById('scan-toggle') as HTMLInputElement;
-  const llmToggle = document.getElementById('llm-toggle') as HTMLInputElement;
-  const scanKnobSwitch = document.querySelectorAll('.knob-switch')[0] as HTMLElement;
-  const llmKnobSwitch = document.querySelectorAll('.knob-switch')[1] as HTMLElement;
-
-  // Verify elements exist
-  if (!scanToggle) {
-    console.error('[Beacon] Scan toggle checkbox not found');
-    return;
-  } else {
-    console.log('[Beacon] Scan toggle found, initializing...');
-  }
-
-  if (!llmToggle) {
-    console.error('[Beacon] LLM toggle checkbox not found');
-    return;
-  } else {
-    console.log('[Beacon] LLM toggle found, initializing...');
-  }
-
-  // Make scan knob clickable
-  if (scanKnobSwitch) {
-    scanKnobSwitch.addEventListener('click', () => {
-      scanToggle.checked = !scanToggle.checked;
-      scanToggle.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-  }
-
-  // Make LLM knob clickable
-  if (llmKnobSwitch) {
-    llmKnobSwitch.addEventListener('click', () => {
-      llmToggle.checked = !llmToggle.checked;
-      llmToggle.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-  }
-
-  // Load scan toggle state from Chrome storage
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['scanningEnabled'], (result) => {
-      const isEnabled = result.scanningEnabled !== false;
-      scanToggle.checked = isEnabled;
-      updateScanButtonState(isEnabled);
-      console.log('[Beacon] Scan toggle initialized:', isEnabled);
-    });
-
-    // Load LLM toggle state from Chrome storage
-    chrome.storage.local.get(['llmEnabled'], (result) => {
-      const isEnabled = result.llmEnabled !== false;
-      llmToggle.checked = isEnabled;
-      console.log('[Beacon] LLM toggle initialized:', isEnabled);
-    });
-  } else {
-    console.warn('[Beacon] chrome.storage not available, using default state');
-    scanToggle.checked = true;
-    llmToggle.checked = true;
-    updateScanButtonState(true);
-  }
-
-  // Listen for scan toggle changes
-  scanToggle.addEventListener('change', (event) => {
-    const isEnabled = (event.target as HTMLInputElement).checked;
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ scanningEnabled: isEnabled });
-    }
-    updateScanButtonState(isEnabled);
-    console.log('[Beacon] Scan toggle changed:', isEnabled);
-  });
-
-  // Listen for LLM toggle changes
-  llmToggle.addEventListener('change', (event) => {
-    const isEnabled = (event.target as HTMLInputElement).checked;
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ llmEnabled: isEnabled });
-    }
-    console.log('[Beacon] LLM toggle changed:', isEnabled);
-  });
-});
-
-// Update the scan button's disabled state based on toggle
-function updateScanButtonState(isEnabled: boolean): void {
-  scanButton.disabled = !isEnabled;
-  if (!isEnabled) {
-    scanButton.textContent = 'Scanning disabled';
-  } else {
-    scanButton.textContent = 'Check this page';
-  }
-}
-
-//(2.5) helper to extract domain from URL
-
-function getDomain(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname;
-  } catch {
-    return url;
-  }
-}
-
-//(3) Mock Analysis function
-//only temporary until we connect to backend API
-
-function mockAnalyze(pageData: PageData): AnalysisResult {
-  const url: string = pageData.url.toLowerCase();
-  const domain: string = getDomain(pageData.url);
-
-  // Known safe domains with their mock info
-  const safeDomainsInfo: { [key: string]: WebsiteInfo } = {
-    "google.com": {
-      domainAge: "Created 27 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "Very High (Top 5 globally)"
-    },
-    "gmail.com": {
-      domainAge: "Created 20 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "Very High (Top 10 globally)"
-    },
-    "youtube.com": {
-      domainAge: "Created 21 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "Very High (Top 3 globally)"
-    },
-    "github.com": {
-      domainAge: "Created 18 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "High (Top 100 globally)"
-    },
-    "wikipedia.org": {
-      domainAge: "Created 25 years ago",
-      country: "United States",
-      registrar: "Gandi SAS",
-      popularity: "Very High (Top 10 globally)"
-    },
-    "amazon.com": {
-      domainAge: "Created 30 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "Very High (Top 15 globally)"
-    },
-    "apple.com": {
-      domainAge: "Created 38 years ago",
-      country: "United States",
-      registrar: "CSC Corporate Domains",
-      popularity: "Very High (Top 20 globally)"
-    },
-    "microsoft.com": {
-      domainAge: "Created 33 years ago",
-      country: "United States",
-      registrar: "MarkMonitor Inc.",
-      popularity: "Very High (Top 30 globally)"
-    }
-  };
-
-  // Check if the domain matches any safe domain.
-  // Object.keys() gives us an array of all the keys in our object
-  // (the domain names). We use .find() to look for one that
-  // appears in the URL. .find() returns the first match or
-  // undefined if nothing matches.
-  const matchedSafe: string | undefined = Object.keys(safeDomainsInfo).find(
-    (safeDomain: string) =>
-      domain === safeDomain || domain.endsWith("." + safeDomain)
-  );
-
-  if (matchedSafe) {
-    return {
-      score: 1,
-      verdict: "Safe",
-      explanation: "This is a well-known, trusted website. No signs of phishing or scam content detected.",
-      websiteInfo: safeDomainsInfo[matchedSafe]
-    };
-  }
-
-  // Check for suspicious URL patterns
-  const suspiciousPatterns: string[] = [
-    "free-money",
-    "winner",
-    "prize",
-    "urgent",
-    "verify-account",
-    "login-secure",
-    "bit.ly",
-    "tinyurl"
-  ];
-
-  const isSuspicious: boolean = suspiciousPatterns.some(
-    (pattern: string) => url.includes(pattern)
-  );
-
-  if (isSuspicious) {
-    return {
-      score: 8,
-      verdict: "Likely Scam",
-      explanation: "This URL contains patterns commonly used in phishing and scam websites. Do not enter any personal information.",
-      websiteInfo: {
-        domainAge: "Created less than 1 year ago",
-        country: "Unknown",
-        registrar: "NameCheap Inc.",
-        popularity: "Very Low (Not ranked)"
-      }
-    };
-  }
-
-  //rest = medium score
-  return {
-    score: 4,
-    verdict: "Suspicious",
-    explanation: "This website could not be verified as safe. Be cautious and avoid entering personal or financial information.",
-    websiteInfo: {
-      domainAge: "Created 2 years ago",
-      country: "Unknown",
-      registrar: "GoDaddy",
-      popularity: "Low"
-    }
-  };
-}
-
-//(4) Determine verdict level from score
-// Returns "safe", "suspicious", or "scam" based on the score
-//Using this to pick the right CSS color classes.
-//0-3 = safe, 4-6 = suspicious, 7-10 = scam
+// –– Helper: score → CSS class suffix ––
+// Returns "safe", "suspicious", or "scam" based on the score.
+// These strings are appended to "score-" and "verdict-" to pick the right
+// colour classes defined in popup.css.
 
 function getVerdictLevel(score: number): string {
-    if (score <= 3) {
-        return "safe";
-    } else if (score <= 6) {
-        return "suspicious";
-    } else {
-        return "scam";
+    if (score <= 3) return "safe";
+    if (score <= 6) return "suspicious";
+    return "scam";
+}
+
+// –– Helper: extract readable domain from a full URL ––
+
+function getDomain(url: string): string {
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return url;
     }
 }
 
-//(5) Show Error msg
+// –– Show error state ––
+// Displays an error message in the popup.
 
 function showError(message: string): void {
     resultsDiv.classList.add("hidden");
@@ -281,78 +59,90 @@ function showError(message: string): void {
     errorMessage.textContent = message;
 }
 
-//(6) Display Scan results
-//takes an AnalysisResult and a URL, then updates all the
-//HTML elements to show the score, verdict, and explanation with  correct colors.
+// –– Show heuristic result ––
+// Takes the HeuristicResult from the background and updates every UI element.
 
-function showResults(result: AnalysisResult, url: string): void {
+function showHeuristicResult(result: HeuristicResult, url: string): void {
     errorDiv.classList.add("hidden");
     resultsDiv.classList.remove("hidden");
 
-    scoreNumber.textContent = result.score.toString(); // Update score number inside circle
-    verdictText.textContent = result.verdict; // Update verdict text and URL
-    const shortUrl: string = url.length > 50 //shortens URL 
-    ? url.substring(0, 50) + "..."
-    : url;
-    verdictUrl.textContent = shortUrl;
-
-    explanationText.textContent = result.explanation; // Update explanation text
-
-    //update website info section
-    infoAge.textContent = result.websiteInfo.domainAge;
-    infoCountry.textContent = result.websiteInfo.country;
-    infoRegistrar.textContent = result.websiteInfo.registrar;
-    infoPopularity.textContent = result.websiteInfo.popularity;
-
-    const level: string = getVerdictLevel(result.score);
-    
-    scoreCircle.classList.remove("score-safe", "score-suspicious", "score-scam"); // Remove old classes
+    // Score circle: update number and background colour.
+    scoreNumber.textContent = result.score.toString();
+    const level = getVerdictLevel(result.score);
+    scoreCircle.classList.remove("score-safe", "score-suspicious", "score-scam");
     scoreCircle.classList.add("score-" + level);
 
-    verdictText.classList.remove("verdict-safe", "verdict-suspicious", "verdict-scam"); // Remove old classes
+    // Verdict text: capitalise first letter ("safe" → "Safe") and apply colour.
+    verdictText.textContent =
+        result.verdict.charAt(0).toUpperCase() + result.verdict.slice(1);
+    verdictText.classList.remove("verdict-safe", "verdict-suspicious", "verdict-scam");
     verdictText.classList.add("verdict-" + level);
+
+    // Show the domain of the page being analysed.
+    verdictUrl.textContent = getDomain(url);
+
+    // Plain-language explanation.
+    explanationText.textContent = result.explanation;
+
+    // Findings list: show only if there is something to report.
+    if (result.findings.length > 0) {
+        findingsSection.classList.remove("hidden");
+        findingsList.innerHTML = "";
+        for (const finding of result.findings) {
+            const li = document.createElement("li");
+            li.textContent = finding;
+            findingsList.appendChild(li);
+        }
+    } else {
+        findingsSection.classList.add("hidden");
+    }
+
+    // Enable "Check this page" (Tier 2) only when heuristics flagged the page.
+    // score < 4 means verdict is "safe" — no need for deeper analysis.
+    scanButton.disabled = result.score < 4;
 }
 
-//(7) Handle Button Click
+// –– Load result on popup open ––
+// DOMContentLoaded fires as soon as the popup HTML is parsed.
+// We immediately ask the background for the stored result for the active tab.
+
+document.addEventListener("DOMContentLoaded", () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+
+        if (!tab?.id) {
+            showError("Could not identify the current tab.");
+            return;
+        }
+
+        // Ask the background service worker for the stored analysis result.
+        // The background responds with { result, pageData } or { error: "..." }.
+        chrome.runtime.sendMessage(
+            { action: "getResult", tabId: tab.id },
+            (response: { result?: HeuristicResult; error?: string }) => {
+                // chrome.runtime.lastError is set if the background didn't respond
+                // (e.g. it was just installed and hasn't run yet).
+                if (chrome.runtime.lastError) {
+                    showError("Beacon is starting up. Reload the page and try again.");
+                    return;
+                }
+
+                if (response?.error || !response?.result) {
+                    showError("Page not analysed yet. Refresh the page and try again.");
+                    return;
+                }
+
+                showHeuristicResult(response.result, tab.url ?? "");
+            }
+        );
+    });
+});
+
+// –– "Check this page" button — Tier 2 (not implemented yet) ––
+// This button is only enabled when heuristics produce a score >= 4.
+// Clicking it will eventually call the API for a deeper AI analysis.
 
 scanButton.addEventListener("click", () => {
-    scanButton.disabled = true;
-    scanButton.textContent = "Scanning...";
-
-    chrome.tabs.query(
-        { active: true, currentWindow: true },
-        (tabs: chrome.tabs.Tab[]) => {
-            
-            const tab = tabs[0];
-            if (!tab || tab.id === undefined) {
-                showError("Could not find the current tab. Please try again.");
-                scanButton.disabled = false;
-                scanButton.textContent = "Check this page";
-                return;
-            }
-
-            const tabId: number = tab.id;
-
-            chrome.tabs.sendMessage(
-                tab.id,
-                { action: "scanPage" },
-                (response: PageData) => {
-                    
-                    if (chrome.runtime.lastError) {
-                        showError(
-                            "Could not scan this page. Try refreshing first."
-                        );
-                    } else if (response) {
-                        const result: AnalysisResult = mockAnalyze(response);
-                        showResults(result, response.url);
-                    } else {
-                        showError("No response from the page.");
-                    }
-                    
-                    scanButton.disabled = false;
-                    scanButton.textContent = "Check this page";
-                }
-            );
-        }
-    );
+    // TODO (Tier 2): send page text to POST /v1/check and show the AI result
+    alert("Deep analysis coming soon!");
 });

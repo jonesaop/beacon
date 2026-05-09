@@ -1,289 +1,154 @@
 // CONTENT SCRIPT
-//file runs auto on every web page user visits
-//(1) extracts structured data (URL, title, text, links, etc)
-//(2) listens for messages from popup and respond with the data
-//(3) logs extracted data to the page console for debugging
+//
+// This file runs automatically on every webpage the user visits.
+// Chrome injects it based on the rule in manifest.json.
+//
+// Responsibilities:
+//   (1) Extract structured data from the page (URL, title, text, links)
+//   (2) Run both heuristics (URL + content) and combine the results
+//   (3) Send the combined result to the background service worker for storage
+//   (4) Listen for "scanPage" messages from the popup (kept for debugging)
+//
+// Why can we use imports here?
+//   Vite bundles this file before it is loaded by Chrome. At build time,
+//   Vite finds all import statements, resolves them, and inlines the imported
+//   code into a single output file. Chrome only ever sees the final bundled
+//   file — no imports remain at runtime.
 
-// Local type declarations
-// Content scripts cannot use ES module imports,
-// so we redeclare the shapes here. Keep in sync
-// with extension/src/types/heuristics.ts.
+import type { HeuristicResult, ExtractedPageData, Link } from "../types/heuristics";
+import { analyzeContent } from "../heuristics/contentHeuristics";
+import { analyzeUrl }     from "../heuristics/urlHeuristics";
 
-interface Link {
-    text: string;
-    href: string;
-}
-
-interface LinkCheckResult {
-    status: "safe" | "unsafe" | "unknown";
-    reason: string;
-}
-
-
-//function that reads page content
-//grabs:(1) current page URL & (2) visible text on page
-//trimming text and cap it to 5000 characters to avoid sending too much data to the server
-interface ExtractedPageData {
-    url: string;
-    title: string;
-    metaDescription: string;
-    textContent: string;
-    links: Link[];
-}
+// –– Data extraction ––
+// Reads the current page's DOM and returns a structured snapshot.
 
 function extractPageData(): ExtractedPageData {
-    //get current page URL
     const url = window.location.href;
-    //title of page
     const title: string = document.title;
-    //meta description used by sites to summarize content, useful for detection and often contains scammy language
+
+    // Meta description: sites use this to summarise their content.
+    // Often contains scammy language in phishing pages.
     const metaDescription: string =
-        document.querySelector('meta[name="description"]')?.getAttribute("content") || "";
-    // Try to find main content area using common tags, fallback to body text
-    const mainElement: HTMLElement | null = 
+        document.querySelector('meta[name="description"]')?.getAttribute("content") ?? "";
+
+    // Prefer a semantic content area if the page has one.
+    const mainElement: HTMLElement | null =
         document.querySelector("main") ||
         document.querySelector("article") ||
-        document.querySelector<HTMLElement>('[role ="main"]');
-    //get visible text content from page, prioritizing main/article/role=main if available
+        document.querySelector<HTMLElement>('[role="main"]');
+
     const rawText: string = mainElement
         ? mainElement.innerText
-        : document.body.innerText || "";
-    //limit text content to 5000 chars
+        : document.body?.innerText ?? "";
+
+    // Cap at 5,000 chars to keep the payload small.
     const textContent: string = rawText.trim().substring(0, 5000);
-    //extract links from page (visible text and href)
-    //limit to first 100 links with http/https protocols to prevent large payloads
+
+    // Collect up to 100 links that have visible text and a real URL.
     const linkElements = document.querySelectorAll("a[href]");
     const links: Link[] = Array.from(linkElements)
-        .map((element) => {
-            const text = (element.textContent || "").trim();
-            const href = element.getAttribute("href") || "";
-            return { text: text, href: href };
-        })
-        .filter((link) => {
-            const isValidProtocol = link.href.startsWith("http://") || link.href.startsWith("https://");
-            return link.text.length > 0 && isValidProtocol;
-        })
+        .map((el) => ({
+            text: (el.textContent ?? "").trim(),
+            href: el.getAttribute("href") ?? "",
+        }))
+        .filter(
+            (link) =>
+                link.text.length > 0 &&
+                (link.href.startsWith("http://") || link.href.startsWith("https://"))
+        )
         .slice(0, 100);
-    
-    return {
-        url: url,
-        title: title,
-        metaDescription: metaDescription,
-        textContent: textContent,
-        links: links
-    };
+
+    return { url, title, metaDescription, textContent, links };
 }
 
-// Hoverlink Checking Logic
-// Type definitions for link checking results
+// –– Result combination ––
+// Takes the output of two heuristics (URL + content) and merges them into
+// a single HeuristicResult. This lets the popup always deal with one object,
+// regardless of how many heuristics ran.
 
-let beaconTooltip: HTMLDivElement | null = null;
-let activeAnchor: HTMLAnchorElement | null = null;
-let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+function combineResults(
+    urlResult: HeuristicResult,
+    contentResult: HeuristicResult
+): HeuristicResult {
+    // Add both scores, capped at 10.
+    const score = Math.min(10, urlResult.score + contentResult.score);
 
-function getOrCreateTooltip(): HTMLDivElement {
-    if (beaconTooltip) {
-        return beaconTooltip;
-    }
+    // Merge all individual findings into one list.
+    const findings = [...urlResult.findings, ...contentResult.findings];
 
-    const tooltip = document.createElement("div");
-    tooltip.id = "beacon-hover-tooltip";
-    tooltip.style.position = "absolute";
-    tooltip.style.zIndex = "2147483647";
-    tooltip.style.maxWidth = "300px";
-    tooltip.style.padding = "10px 12px";
-    tooltip.style.borderRadius = "8px";
-    tooltip.style.fontSize = "12px";
-    tooltip.style.lineHeight = "1.4";
-    tooltip.style.backgroundColor = "#111827";
-    tooltip.style.color = "#ffffff";
-    tooltip.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.2)";
-    tooltip.style.border = "1px solid rgba(255, 255, 255, 0.1)";
-    tooltip.style.pointerEvents = "none";
-    tooltip.style.display = "none";
-    tooltip.style.wordBreak = "break-word";
+    // Derive a single verdict from the combined score.
+    // Thresholds must match the ones in popup.ts for colour coding.
+    let verdict: HeuristicResult["verdict"];
+    let explanation: string;
 
-    document.body.appendChild(tooltip);
-    beaconTooltip = tooltip;
-
-    return tooltip;
-}
-
-function positionTooltip(anchor: HTMLAnchorElement): void {
-    const tooltip = getOrCreateTooltip();
-    const rect = anchor.getBoundingClientRect();
-
-    tooltip.style.top = `${window.scrollY + rect.bottom + 8}px`;
-    tooltip.style.left = `${window.scrollX + rect.left}px`;
-}
-
-function renderTooltip(result: LinkCheckResult, href: string): void {
-    const tooltip = getOrCreateTooltip();
-
-    tooltip.replaceChildren();
-
-    let label = "";
-    if (result.status === "safe") {
-        label = "✅ Safe";
-    } else if (result.status === "unsafe") {
-        label = "⚠️ Not safe";
+    if (score <= 3) {
+        verdict = "safe";
+        explanation = score === 0
+            ? "No indicators detected."
+            : "Minor indicators detected. Likely safe — stay alert.";
+    } else if (score <= 6) {
+        verdict = "suspicious";
+        explanation = "This page has indicators commonly associated with scams. Exercise caution.";
     } else {
-        label = "❓ Checking";
+        verdict = "scam";
+        explanation = "Strong scam indicators detected. Do not enter personal information.";
     }
 
-     const labelDiv = document.createElement("div");
-    labelDiv.textContent = label;
-    labelDiv.style.fontWeight = "600";
-    labelDiv.style.marginBottom = "6px";
-
-    const hrefDiv = document.createElement("div");
-    hrefDiv.textContent = href;
-    hrefDiv.style.marginBottom = "6px";
-    hrefDiv.style.opacity = "0.9";
-
-    const reasonDiv = document.createElement("div");
-    reasonDiv.textContent = result.reason;
-    reasonDiv.style.opacity = "0.85";
-
-    tooltip.append(labelDiv, hrefDiv, reasonDiv);
-    tooltip.style.display = "block";
+    return { score, verdict, explanation, findings, source: "combined" };
 }
 
-function hideTooltip(): void {
-    if (beaconTooltip) {
-        beaconTooltip.style.display = "none";
-    }
-    activeAnchor = null;
-}
-
-function findAnchor(target: EventTarget | null): HTMLAnchorElement | null {
-    if (!(target instanceof Element)) {
-        return null;
-    }
-
-    const anchor = target.closest("a[href]");
-    return anchor instanceof HTMLAnchorElement ? anchor : null;
-}
-
-async function checkHoveredLink(anchor: HTMLAnchorElement): Promise<void> {
-    const href = anchor.href;
-    if (!href) {
-        return;
-    }
-
-    activeAnchor = anchor;
-    positionTooltip(anchor);
-    renderTooltip(
-        {
-            status: "unknown",
-            reason: "Checking this link..."
-        },
-        href
-    );
-
-    try {
-        const result = await chrome.runtime.sendMessage({
-            type: "CHECK_LINK",
-            url: href
-        }) as LinkCheckResult;
-
-        if (activeAnchor === anchor) {
-            positionTooltip(anchor);
-            renderTooltip(result, href);
-        }
-    } catch {
-        if (activeAnchor === anchor) {
-            renderTooltip(
-                {
-                    status: "unknown",
-                    reason: "Beacon could not check this link right now."
-                },
-                href
-            );
-        }
-    }
-}
-
-document.addEventListener("mouseover", (event: MouseEvent) => {
-    const anchor = findAnchor(event.target);
-    if (!anchor) {
-        return;
-    }
-
-    if (hoverTimer !== null) {
-        window.clearTimeout(hoverTimer);
-    }
-
-    hoverTimer = window.setTimeout(() => {
-        void checkHoveredLink(anchor);
-    }, 300);
-});
-
-document.addEventListener("mouseout", (event: MouseEvent) => {
-    const anchor = findAnchor(event.target);
-    if (!anchor) {
-        return;
-    }
-
-    if (hoverTimer !== null) {
-        window.clearTimeout(hoverTimer);
-        hoverTimer = null;
-    }
-
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && beaconTooltip?.contains(nextTarget)) {
-        return;
-    }
-
-    hideTooltip();
-});
-
-window.addEventListener("scroll", () => {
-    if (activeAnchor) {
-        positionTooltip(activeAnchor);
-    }
-});
-// Helper: print extracted page data to the page console in a readable way
-// 'label' lets us know what triggered the log (page load vs popup scan)
+// –– Logging helper ––
+// Prints a formatted summary of extracted page data to the browser console.
+// Open DevTools on any page (F12 → Console) and look for [Beacon] entries.
 
 function logExtractedData(label: string, data: ExtractedPageData): void {
-    console.group(`[Beacon] Extracted page data (${label})`);
+    console.group(`[Beacon] Page data (${label})`);
     console.log("URL:", data.url);
     console.log("Title:", data.title);
     console.log("Meta description:", data.metaDescription);
-    console.log("Text content length:", data.textContent.length, "chars");
-    console.log("Text content preview:", data.textContent.substring(0, 200) + "...");
+    console.log("Text length:", data.textContent.length, "chars");
+    console.log("Text preview:", data.textContent.substring(0, 200) + "…");
     console.log("Links found:", data.links.length);
-    console.table(data.links.slice(0, 10)); //show first 10 links as a table
+    console.table(data.links.slice(0, 10));
     console.groupEnd();
 }
 
-// Run extraction once when the page loads, so we can verify in DevTools
-// that Beacon is seeing the page correctly without needing to open the popup.
+// –– Pipeline (runs once on page load) ––
+
 const initialData = extractPageData();
 logExtractedData("page load", initialData);
 
-// Listen for messages from the popup script
-// chrome.runtime.onMessage is Chrome's messaging system.
-// When the popup sends a message, this listener receives it
+// Run both heuristics and combine into one result.
+const urlResult     = analyzeUrl(initialData.url);
+const contentResult = analyzeContent(initialData);
+const combined      = combineResults(urlResult, contentResult);
 
-//listener receives:
-//message = data sent by popup
-//sender = info about who sent message
-//sendResponse = function to send a reply back to the popup
+console.log("[Beacon] Combined heuristic result:", combined);
+
+// Hand the result to the background service worker for storage.
+// The popup will request it later via { action: "getResult" }.
+chrome.runtime.sendMessage({
+    action:   "storeResult",
+    result:   combined,
+    pageData: initialData,
+});
+
+// –– Popup message listener (debugging) ––
+// Kept so the popup can also request fresh page data directly if needed.
+// "return true" tells Chrome to keep the message channel open so that
+// sendResponse can be called after this listener returns.
 
 chrome.runtime.onMessage.addListener(
-   (
-     message: { action: string },
-     sender: chrome.runtime.MessageSender,
-     sendResponse: (response:ExtractedPageData) => void
-   ) => {
-     if (message.action === "scanPage") {
-        const pageData = extractPageData();
-        logExtractedData("popup scan", pageData);
-        sendResponse(pageData);
-     }
-     return true;
- } 
+    (
+        message: { action: string },
+        _sender: chrome.runtime.MessageSender,
+        sendResponse: (response: ExtractedPageData) => void
+    ) => {
+        if (message.action === "scanPage") {
+            const freshData = extractPageData();
+            logExtractedData("popup scan", freshData);
+            sendResponse(freshData);
+        }
+        return true;
+    }
 );
-

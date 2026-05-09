@@ -1,18 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES6",
-    "module": "ES2015",
-    "moduleResolution": "node",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "outDir": "dist",
     "rootDir": "src",
     "types": ["chrome"],
     "lib": ["DOM", "ES2020"],
     "strict": true,
-    "noEmit": false,
+    "noEmit": true,
     "sourceMap": false,
-    "types": ["chrome"],
-    "skipLibCheck": true,
-    "importsNotUsedAsValues": "remove"
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

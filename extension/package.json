@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "description": "Privacy-first scam detection Chrome extension",
   "scripts": {
-    "build": "tsc && copyfiles -u 2 src/popup/popup.html src/popup/popup.css dist/popup"
+    "build": "tsc --noEmit && vite build && copyfiles -u 2 src/popup/popup.html src/popup/popup.css dist/popup"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.300",
     "copyfiles": "^2.4.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vite": "^8.0.11"
   }
 }
