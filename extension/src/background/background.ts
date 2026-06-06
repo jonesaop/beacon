@@ -16,6 +16,10 @@
 //
 //   popup.ts    ->  { action: "getResult", tabId }               →  background.ts
 //   background.ts  ->  { result, pageData }  OR  { error: "not found" }  →  popup.ts
+//
+//   popup.ts    ->  { action: "setEnabled", enabled: boolean }   →  background.ts
+//   popup.ts    ->  { action: "getEnabled" }                     →  background.ts
+//   background.ts  ->  { enabled: boolean }                      →  popup.ts
 
 import type { HeuristicResult, ExtractedPageData } from "../types/heuristics";
 
@@ -29,6 +33,9 @@ interface StoredEntry {
 // chrome.storage.session persists for the lifetime of the browser session and
 // survives Chrome suspending the service worker to save resources.
 // Key pattern: "tab_<tabId>" → StoredEntry JSON.
+//
+// chrome.storage.local persists across browser restarts and is used for
+// user preferences like the "Enable Beacon" toggle.
 
 // –– Message listener ––
 // chrome.runtime.onMessage fires whenever content.ts or popup.ts calls
@@ -41,20 +48,27 @@ chrome.runtime.onMessage.addListener(
             result?: HeuristicResult;
             pageData?: ExtractedPageData;
             tabId?: number;
+            enabled?: boolean;
         },
         sender: chrome.runtime.MessageSender,
         sendResponse: (response: unknown) => void
     ) => {
         if (message.action === "storeResult") {
             // Content script finished heuristics and is handing us the result.
-            // sender.tab.id tells us which tab sent the message.
+            // Skip storing if the user has disabled Beacon.
             const tabId = sender.tab?.id;
             if (tabId !== undefined && message.result && message.pageData) {
-                const entry: StoredEntry = {
-                    result: message.result,
-                    pageData: message.pageData,
-                };
                 (async () => {
+                    const prefs = await chrome.storage.local.get("isEnabled");
+                    const isEnabled = prefs["isEnabled"] !== false; // default true
+                    if (!isEnabled) {
+                        sendResponse({ success: false });
+                        return;
+                    }
+                    const entry: StoredEntry = {
+                        result: message.result!,
+                        pageData: message.pageData!,
+                    };
                     await chrome.storage.session.set({ [`tab_${tabId}`]: entry });
                     console.log(`[Beacon] stored result for tab ${tabId}`, message.result);
                     sendResponse({ success: true });
@@ -62,7 +76,7 @@ chrome.runtime.onMessage.addListener(
             } else {
                 sendResponse({ success: false });
             }
-            return true; // Keep message channel open for async sendResponse
+            return true;
         }
 
         if (message.action === "getResult") {
@@ -81,7 +95,34 @@ chrome.runtime.onMessage.addListener(
             } else {
                 sendResponse({ error: "not found" });
             }
-            return true; // Keep message channel open for async sendResponse
+            return true;
+        }
+
+        if (message.action === "getEnabled") {
+            (async () => {
+                const prefs = await chrome.storage.local.get("isEnabled");
+                const isEnabled = prefs["isEnabled"] !== false; // default true
+                sendResponse({ enabled: isEnabled });
+            })();
+            return true;
+        }
+
+        if (message.action === "setEnabled") {
+            const enabled = message.enabled !== false;
+            (async () => {
+                await chrome.storage.local.set({ isEnabled: enabled });
+                // When disabling, clear all stored tab results so the popup
+                // won't show stale data from before the extension was paused.
+                if (!enabled) {
+                    const all = await chrome.storage.session.get(null);
+                    const tabKeys = Object.keys(all).filter((k) => k.startsWith("tab_"));
+                    if (tabKeys.length > 0) {
+                        await chrome.storage.session.remove(tabKeys);
+                    }
+                }
+                sendResponse({ success: true });
+            })();
+            return true;
         }
 
         return false;
