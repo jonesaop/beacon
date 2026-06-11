@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   RadioTower,
   Sparkles,
@@ -12,6 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { HeuristicResult, ExtractedPageData } from "../types/heuristics";
+import type { AnalyzeResponse } from "../types/api";
 
 const RESTRICTED_PROTOCOLS = new Set([
   "chrome:",
@@ -40,15 +41,22 @@ function getDomain(url: string): string {
 
 export default function App() {
   const [result, setResult] = useState<HeuristicResult | null>(null);
+  const [pageData, setPageData] = useState<ExtractedPageData | null>(null);
   const [pageUrl, setPageUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extensionEnabled, setExtensionEnabled] = useState(true);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [llmResult, setLlmResult] = useState<AnalyzeResponse | null>(null);
+  const [llmError, setLlmError] = useState<string | null>(null);
 
   useEffect(() => {
     // Load persisted enabled state from background before fetching result
+    chrome.storage.local.get("aiEnabled", (stored) => {
+      if (stored.aiEnabled !== undefined) setAiEnabled(stored.aiEnabled as boolean);
+    });
+
     chrome.runtime.sendMessage({ action: "getEnabled" }, (resp: { enabled: boolean }) => {
       if (!chrome.runtime.lastError && resp?.enabled !== undefined) {
         setExtensionEnabled(resp.enabled);
@@ -73,6 +81,7 @@ export default function App() {
               setError("Page not yet analysed. Refresh the page and try again.");
             } else {
               setResult(response.result);
+              setPageData(response.pageData ?? null);
               setPageUrl(response.pageData?.url ?? tab.url ?? "");
             }
             setIsLoading(false);
@@ -87,16 +96,48 @@ export default function App() {
     chrome.runtime.sendMessage({ action: "setEnabled", enabled });
   };
 
-  const handleCheckPage = () => {
-    setIsAnalyzing(true);
-    // TODO (Tier 2): POST /v1/check with page text for AI deep analysis
-    setTimeout(() => setIsAnalyzing(false), 2000);
+  const handleAiToggle = (enabled: boolean) => {
+    setAiEnabled(enabled);
+    chrome.storage.local.set({ aiEnabled: enabled });
   };
 
-  const score = result?.score ?? 0;
-  const isSafe = !result || result.verdict === "safe";
-  const isWarning = result?.verdict === "uncertain";
-  const isDanger = result?.verdict === "scam";
+  const handleCheckPage = async () => {
+    if (!result || !pageData) return;
+    setIsAnalyzing(true);
+    setLlmError(null);
+    try {
+      const resp = await fetch(`${__API_BASE_URL__}/v1/analyze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Beacon-Key": __BEACON_API_KEY__,
+        },
+        body: JSON.stringify({
+          url: pageData.url,
+          text: pageData.textContent.slice(0, 1500),
+          heuristic_score: result.score,
+          context: "page_body",
+          title: pageData.title,
+          meta_description: pageData.metaDescription,
+          heuristic_verdict: result.verdict,
+          heuristic_findings: result.findings,
+        }),
+      });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const data: AnalyzeResponse = await resp.json();
+      setLlmResult(data);
+    } catch {
+      setLlmError("AI check unavailable");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const score = llmResult?.risk_score ?? result?.score ?? 0;
+  const activeVerdict = llmResult?.label ?? result?.verdict;
+  const isSafe = !result || activeVerdict === "safe";
+  const isWarning = activeVerdict === "uncertain";
+  const isDanger = activeVerdict === "scam";
 
   let statusColor = "text-green-600";
   let ringColor = "text-green-500";
@@ -119,10 +160,9 @@ export default function App() {
   }
 
   const summaryText =
+    llmResult?.reason ??
     result?.explanation ??
-    (isSafe
-      ? "No significant phishing indicators detected. This page appears safe to browse."
-      : "");
+    (isSafe ? "No significant phishing indicators detected. This page appears safe to browse." : "");
 
   // SVG circular gauge
   const radius = 32;
@@ -182,7 +222,7 @@ export default function App() {
           <div>
             <button
               onClick={handleCheckPage}
-              disabled={isSafe || isAnalyzing || !extensionEnabled || !aiEnabled}
+              disabled={isSafe || isAnalyzing || !extensionEnabled || !aiEnabled || !!llmResult}
               className={`w-full py-3.5 px-4 rounded-xl font-semibold text-[16px] shadow-sm flex justify-center items-center gap-2 transition-all ${
                 isSafe || !extensionEnabled || !aiEnabled
                   ? "bg-gray-200 text-gray-400 cursor-not-allowed"
@@ -256,6 +296,7 @@ export default function App() {
                 <div className="flex items-center gap-2 mb-1">
                   <StatusIcon className={`w-5 h-5 ${statusColor}`} />
                   <h2 className={`text-xl font-bold ${statusColor}`}>{statusText}</h2>
+                  {llmResult && <BrainCircuit className="w-4 h-4 text-purple-400" />}
                 </div>
                 <p className="text-gray-500 text-[15px] truncate font-medium">
                   {getDomain(pageUrl) || "—"}
@@ -263,6 +304,7 @@ export default function App() {
               </div>
             </div>
           </div>
+
 
           {/* Summary */}
           <div
@@ -276,25 +318,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* Findings */}
-          {result && result.findings.length > 0 && (
-            <div
-              className={`bg-white rounded-2xl p-5 shadow-sm border border-gray-100 transition-opacity ${
-                !extensionEnabled ? "opacity-50" : ""
-              }`}
-            >
-              <h3 className="text-lg font-bold text-gray-900 mb-3">Findings</h3>
-              <ul className="space-y-3">
-                {result.findings.map((finding, i) => (
-                  <li key={i} className="flex items-start gap-3 text-[15px] text-gray-700 leading-snug">
-                    <span className={`mt-1 flex-shrink-0 ${isDanger ? "text-red-500" : "text-amber-500"}`}>
-                      •
-                    </span>
-                    <span>{finding}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {/* AI disclaimer + error */}
+          {(llmResult || llmError) && (
+            <p className="text-center text-xs text-gray-400 px-2">
+              {llmError
+                ? "AI check unavailable. Results shown are from heuristic scan only."
+                : "AI results may not always be accurate. When in doubt, avoid the site."}
+            </p>
           )}
 
           {/* Settings */}
@@ -341,7 +371,7 @@ export default function App() {
                 </div>
                 <Toggle
                   enabled={aiEnabled}
-                  onChange={setAiEnabled}
+                  onChange={handleAiToggle}
                   disabled={!extensionEnabled}
                 />
               </div>

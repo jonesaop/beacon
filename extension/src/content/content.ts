@@ -8,12 +8,6 @@
 //   (2) Run both heuristics (URL + content) and combine the results
 //   (3) Send the combined result to the background service worker for storage
 //   (4) Listen for "scanPage" messages from the popup (kept for debugging)
-//
-// Why can we use imports here?
-//   Vite bundles this file before it is loaded by Chrome. At build time,
-//   Vite finds all import statements, resolves them, and inlines the imported
-//   code into a single output file. Chrome only ever sees the final bundled
-//   file — no imports remain at runtime.
 
 import type { HeuristicResult, ExtractedPageData, Link } from "../types/heuristics";
 import { analyzeContent, toVerdict } from "../heuristics/contentHeuristics";
