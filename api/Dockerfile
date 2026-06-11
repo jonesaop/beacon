@@ -1,21 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22-alpine AS build
+FROM python:3.12-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
-COPY tsconfig.json ./
-COPY src ./src
-RUN npm run build
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-FROM node:22-alpine
+FROM python:3.12-slim
 WORKDIR /app
-ENV NODE_ENV=production
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
-COPY --from=build /app/dist ./dist
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=build /app .
 
 RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
 USER appuser
 EXPOSE 3000
-CMD ["node", "dist/index.js"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
